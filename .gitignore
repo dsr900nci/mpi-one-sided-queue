@@ -1,0 +1,11 @@
+#Compiled object files and applications
+*.o
+*.x
+#Emacs temporaries
+*~
+#Plain text output
+*.txt
+#Score-P profiling data
+scorep-*
+#Fortran code (for now)
+*.f90
