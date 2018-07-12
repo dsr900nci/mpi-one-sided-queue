@@ -121,13 +121,14 @@ int main(int argc, char **argv)
     }
 
     // Grab the next starting point
-    if ( mpi_rank == 0 ) {
-      this_start = *win_mem;
-      *win_mem += queue_increment;
-    }
-    else {
-      ierr = MPI_Fetch_and_op( &queue_increment, &this_start, MPI_INT, 0, 0, MPI_SUM, win );
-    }
+    // More reading suggests that rank 0 can in fact call MPI_Fetch_and_op
+    //    if ( mpi_rank == 0 ) {
+    //      this_start = *win_mem;
+    //      *win_mem += queue_increment;
+    //    }
+    //    else {
+    ierr = MPI_Fetch_and_op( &queue_increment, &this_start, MPI_INT, 0, 0, MPI_SUM, win );
+      //    }
 
     // Update the window for everyone
     ierr = MPI_Win_flush( 0, win );
