@@ -57,6 +57,11 @@ int main(int argc, char **argv)
    OpenMPI 2.0.4 : Still segfaults
    Intel MPI: All ranks except first process on each node hangs
    
+   Performance issues seemed to come about due to releasing a lock then quickly obtaining 
+   another. In this version, one lock is obtained, and a race condition between 
+   initialisation and updates are mitigated with a barrier before the work starts.
+   Timing for MPI_Win_lock falls to almost 0 when using OpenMPI. Intel-MPI hangs
+   obtaining the lock
 
 */
 
@@ -97,17 +102,21 @@ int main(int argc, char **argv)
   this_start = mpi_rank * QUEUE_INCREMENT;
   this_end   = this_start + QUEUE_INCREMENT;
   // Start after the first bunch of work is done
-  if ( mpi_rank == 0 ) {
-    ierr = MPI_Win_lock( MPI_LOCK_EXCLUSIVE, 0, 0, win );
-    // memset( win_mem, (mpi_size+1)*QUEUE_INCREMENT, sizeof(int) );
-    *win_mem = (mpi_size+1)*QUEUE_INCREMENT;
-    ierr = MPI_Win_unlock( 0, win );
-  }
-
   // Lock all to start
-  ierr = MPI_Barrier( MPI_COMM_WORLD );
   //  ierr = MPI_Win_lock_all( 0, win );
   ierr = MPI_Win_lock( MPI_LOCK_SHARED, 0, 0, win );
+
+  // Try to do initilisation in the same lock as the updates, 
+  // barrier before entry into the work section to prevent
+  // race conditions
+  if ( mpi_rank == 0 ) {
+    //    ierr = MPI_Win_lock( MPI_LOCK_EXCLUSIVE, 0, 0, win );
+    // memset( win_mem, (mpi_size+1)*QUEUE_INCREMENT, sizeof(int) );
+    *win_mem = (mpi_size+1)*QUEUE_INCREMENT;
+    ierr = MPI_Win_flush( 0, win );
+    //  ierr = MPI_Win_unlock( 0, win );
+  }
+  ierr = MPI_Barrier( MPI_COMM_WORLD );
   
   while ( this_start < QUEUE_LIMIT ) {
     
