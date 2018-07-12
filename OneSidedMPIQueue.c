@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#define QUEUE_LIMIT 8000
+#define QUEUE_LIMIT 14000
 // Phase 1: Fixed increment known to all at runtime
 #define QUEUE_INCREMENT 10
 #define WORK_TIME 0
@@ -45,7 +45,20 @@ int main(int argc, char **argv)
    MPI_Win_flush_all is slow on all ranks using OpenMPI 1.10.7
 
    MPI_Win_flush_all operations are extremely slow in Intel-MPI on nodes other than 
-   the root node.   */
+   the root node.   
+
+   Further reading shows that using Win_*_all is overkill, since we only need to access
+   memory on one rank. We can just use Win_lock/flush/unlock, instead, which hopefully helps
+   performance a bit.
+   Results:
+   OpenMPI 3.1.0 : MPI_Win_lock time increases to 35 seconds.
+   OpenMPI 3.0.1 : Same timing as MPI_Win_lock_all
+   OpenMPI 2.1.3 : Same timing as MPI_Win_lock_all
+   OpenMPI 2.0.4 : Still segfaults
+   Intel MPI: All ranks except first process on each node hangs
+   
+
+*/
 
   // MPI stuff
   int mpi_rank, mpi_size;
@@ -93,7 +106,8 @@ int main(int argc, char **argv)
 
   // Lock all to start
   ierr = MPI_Barrier( MPI_COMM_WORLD );
-  ierr = MPI_Win_lock_all( 0, win );
+  //  ierr = MPI_Win_lock_all( 0, win );
+  ierr = MPI_Win_lock( MPI_LOCK_SHARED, 0, 0, win );
   
   while ( this_start < QUEUE_LIMIT ) {
     
@@ -116,12 +130,12 @@ int main(int argc, char **argv)
     }
 
     // Update the window for everyone
-    ierr = MPI_Win_flush_all( win );
-    ierr = MPI_Win_sync( win );
+    ierr = MPI_Win_flush( 0, win );
+    //ierr = MPI_Win_sync( win );
     this_end = this_start + queue_increment;      
   }
 
-  ierr = MPI_Win_unlock_all( win );
+  ierr = MPI_Win_unlock( 0, win );
   ierr = MPI_Win_free( &win );
 
 
