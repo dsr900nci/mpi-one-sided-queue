@@ -69,12 +69,20 @@ int main(int argc, char **argv)
   int mpi_rank, mpi_size;
   int ierr;
 
-  // Window stuff
+  // Queue Window stuff
   int win_size = 0;
   int disp_unit = sizeof(int);
   int *win_mem;
   MPI_Win win;
+
+  // Data window stuff
+  int data_win_size = 0;
+  int *data_win_mem;
+  MPI_Win data_win;
   
+  // Local data array
+  int *local_data_array;
+
   // Queue stuff
   int this_start = 0;
   int this_end = 0;
@@ -94,9 +102,13 @@ int main(int argc, char **argv)
 
 
   //   Set up the shared memory
-  if ( mpi_rank == 0 ) win_size = sizeof(int) ;
+  if ( mpi_rank == 0 ) {
+    win_size = sizeof(int) ;
+    data_win_size = QUEUE_LIMIT * sizeof(int);
+  }
 
   ierr = MPI_Win_allocate( win_size, disp_unit, MPI_INFO_NULL, MPI_COMM_WORLD, &win_mem, &win );
+  ierr = MPI_Win_allocate( data_win_size, disp_unit, MPI_INFO_NULL, MPI_COMM_WORLD, &data_win_mem, &data_win );
 
   // Set up a small fixed window to start with
   this_start = mpi_rank * QUEUE_INCREMENT;
@@ -105,6 +117,7 @@ int main(int argc, char **argv)
   // Lock all to start
   //  ierr = MPI_Win_lock_all( 0, win );
   ierr = MPI_Win_lock( MPI_LOCK_SHARED, 0, 0, win );
+  ierr = MPI_Win_lock( MPI_LOCK_SHARED, 0, 0, data_win );
 
   // Try to do initilisation in the same lock as the updates, 
   // barrier before entry into the work section to prevent
@@ -112,21 +125,24 @@ int main(int argc, char **argv)
   if ( mpi_rank == 0 ) {
     //    ierr = MPI_Win_lock( MPI_LOCK_EXCLUSIVE, 0, 0, win );
     // memset( win_mem, (mpi_size+1)*QUEUE_INCREMENT, sizeof(int) );
-    *win_mem = (mpi_size+1)*QUEUE_INCREMENT;
+    *win_mem = mpi_size*QUEUE_INCREMENT;
     ierr = MPI_Win_flush( 0, win );
     //  ierr = MPI_Win_unlock( 0, win );
   }
   ierr = MPI_Barrier( MPI_COMM_WORLD );
+
+  local_data_array = (int*) malloc( QUEUE_INCREMENT * sizeof(int) );
   
   while ( this_start < QUEUE_LIMIT ) {
     
     printf( "Rank %d has %d to %d\n", mpi_rank, this_start, this_end );
     // Do the 'work'
+    int j = 0;
     for( i = this_start; i < this_end; ++i ) {
       work_time = WORK_TIME + rand()%WORK_UNCERTAINTY;
       //      if ( i == this_start ) printf("Rank: %d, work time:%d\n", mpi_rank, work_time );
       usleep( work_time ); 
-
+      local_data_array[j++] = work_time;
     }
 
     // Grab the next starting point
@@ -136,22 +152,43 @@ int main(int argc, char **argv)
     //      *win_mem += queue_increment;
     //    }
     //    else {
+    ierr = MPI_Put( &local_data_array[0], (this_end - this_start ), MPI_INT, 0, this_start, 
+		    (this_end - this_start ), MPI_INT, data_win );
     ierr = MPI_Fetch_and_op( &queue_increment, &this_start, MPI_INT, 0, 0, MPI_SUM, win );
       //    }
 
     // Update the window for everyone
     ierr = MPI_Win_flush( 0, win );
     //ierr = MPI_Win_sync( win );
-    this_end = this_start + queue_increment;      
+    this_end = this_start + queue_increment;
+    if ( this_end > QUEUE_LIMIT ) this_end = QUEUE_LIMIT;
   }
 
   ierr = MPI_Win_unlock( 0, win );
   ierr = MPI_Win_free( &win );
 
+  ierr = MPI_Win_flush( 0, data_win );
+  ierr = MPI_Win_unlock( 0, data_win );
 
+  double average_work_time = 0.0;
+  int min_work_time = WORK_TIME + WORK_UNCERTAINTY;
+  int max_work_time = 0;
+  
+  if ( mpi_rank == 0 ) {
+    for( i = 0; i < QUEUE_LIMIT; ++i ) {
+      if( data_win_mem[i] > max_work_time ) max_work_time = data_win_mem[i];
+      if( data_win_mem[i] < min_work_time ) min_work_time = data_win_mem[i];
+      average_work_time += (double)data_win_mem[i];
+    }
+    average_work_time /= QUEUE_LIMIT;
+    printf("%d %f %d\n", min_work_time, average_work_time, max_work_time );
+  }
+  
+  ierr = MPI_Win_free( &data_win );    
+  free( local_data_array );
   // Finish up
   ierr = MPI_Finalize();
-
+ 
 }
     
   
